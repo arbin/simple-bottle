@@ -1,0 +1,288 @@
+FastAPI Setup
+Start by creating a new project folder called "fastapi-vue" and add the following files and folders:
+
+fastapi-vue
+├── docker-compose.yml
+└── services
+    └── backend
+        ├── Dockerfile
+        ├── requirements.txt
+        └── src
+            └── main.py
+
+The following command will create the project structure:
+
+$ mkdir fastapi-vue && \
+  cd fastapi-vue && \
+  mkdir -p services/backend/src && \
+  touch docker-compose.yml services/backend/Dockerfile && \
+  touch services/backend/requirements.txt services/backend/src/main.py
+
+
+Next, add the following code to services/backend/Dockerfile:
+
+FROM python:3.11-buster
+
+RUN mkdir app
+WORKDIR /app
+
+ENV PATH="${PATH}:/root/.local/bin"
+ENV PYTHONPATH=.
+
+COPY requirements.txt .
+RUN pip install --upgrade pip
+RUN pip install -r requirements.txt
+
+COPY src/ .
+
+
+Add the following dependencies to the services/backend/requirements.txt file:
+
+fastapi==0.88.0
+uvicorn==0.20.0
+
+
+Update docker-compose.yml like so:
+
+version: '3.8'
+
+services:
+
+  backend:
+    build: ./services/backend
+    ports:
+      - 5000:5000
+    volumes:
+      - ./services/backend:/app
+    command: uvicorn src.main:app --reload --host 0.0.0.0 --port 5000
+
+Before we build the image, let's add a test route to services/backend/src/main.py so we can quickly test that the app was built successfully:
+
+from fastapi import FastAPI
+
+
+app = FastAPI()
+
+
+@app.get("/")
+def home():
+    return "Hello, World!"
+
+Build the image in your terminal:
+
+$ docker-compose up -d --build
+
+Once done, navigate to http://127.0.0.1:5000/ in your browser of choice. You should see:
+
+"Hello, World!"
+
+You can view the Swagger UI at http://localhost:5000/docs.
+
+Next, add CORSMiddleware:
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware  # NEW
+
+
+app = FastAPI()
+
+# NEW
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8080"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/")
+def home():
+    return "Hello, World!"
+
+
+CORSMiddleware is required to make cross-origin requests -- i.e., requests that originate from a different protocol, IP address, domain name, or port. This is necessary since the frontend will run at http://localhost:8080.
+
+Vue Setup
+To get started with our frontend, we'll scaffold out a project using the Vue CLI.
+
+Make sure you're using version 5.0.8 of the Vue CLI:
+
+$ vue -V
+@vue/cli 5.0.8
+
+# install
+$ npm install -g @vue/cli@5.0.8
+
+Next, from the "fastapi-vue/services" folder, scaffold out a new Vue project:
+
+$ vue create frontend
+
+$ cd frontend
+$ vue add router
+$ Use history mode for router ? Y
+$ npm install --save axios@1.2.1 vuex@4.1.0 bootstrap@5.2.3
+
+We'll discuss each of these dependencies shortly.
+
+To serve up the Vue application locally, run:
+
+$ npm run serve
+
+Navigate to http://localhost:8080/ to view your app.
+
+Kill the server.
+
+Next, wire up the dependencies for Axios and Bootstrap in services/frontend/src/main.js:
+
+import 'bootstrap/dist/css/bootstrap.css';
+import { createApp } from "vue";
+import axios from 'axios';
+
+import App from './App.vue';
+import router from './router';
+
+const app = createApp(App);
+
+axios.defaults.withCredentials = true;
+axios.defaults.baseURL = 'http://localhost:5000/';  // the FastAPI backend
+
+app.use(router);
+app.mount("#app");
+
+Add a Dockerfile to "services/frontend":
+
+FROM node:lts-alpine
+
+WORKDIR /app
+
+ENV PATH /app/node_modules/.bin:$PATH
+
+RUN npm install @vue/cli@5.0.8 -g
+
+COPY package.json .
+COPY package-lock.json .
+RUN npm install
+
+CMD ["npm", "run", "serve"]
+
+Add a frontend service to docker-compose.yml:
+
+version: '3.8'
+
+services:
+
+  backend:
+    build: ./services/backend
+    ports:
+      - 5000:5000
+    volumes:
+      - ./services/backend:/app
+    command: uvicorn src.main:app --reload --host 0.0.0.0 --port 5000
+
+  frontend:
+    build: ./services/frontend
+    volumes:
+      - './services/frontend:/app'
+      - '/app/node_modules'
+    ports:
+      - 8080:8080
+
+Build the new image and spin up the containers:
+
+$ docker-compose up -d --build
+
+Ensure http://localhost:8080/ still works.
+
+Next, update services/frontend/src/components/HelloWorld.vue like so:
+
+<template>
+  <div>
+    <p>{{ msg }}</p>
+  </div>
+</template>
+
+<script>
+import axios from 'axios';
+
+export default {
+  name: 'Ping',
+  data() {
+    return {
+      msg: '',
+    };
+  },
+  methods: {
+    getMessage() {
+      axios.get('/')
+        .then((res) => {
+          this.msg = res.data;
+        })
+        .catch((error) => {
+          console.error(error);
+        });
+    },
+  },
+  created() {
+    this.getMessage();
+  },
+};
+</script>
+
+Axios, which is an HTTP client, is used to send AJAX requests to the backend. In the above component, we updated the value of msg from the response from the backend.
+
+Finally, within services/frontend/src/App.vue, remove the navigation along with the associated styles:
+
+<template>
+  <div id="app">
+    <router-view/>
+  </div>
+</template>
+
+<style>
+#app {
+  font-family: Avenir, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-align: center;
+  color: #2c3e50;
+}
+</style>
+
+You should now see Hello, World! in the browser at http://localhost:8080/.
+
+Your full project structure should now look like this:
+
+├── docker-compose.yml
+└── services
+    ├── backend
+    │   ├── Dockerfile
+    │   ├── requirements.txt
+    │   └── src
+    │       └── main.py
+    └── frontend
+        ├── .gitignore
+        ├── Dockerfile
+        ├── README.md
+        ├── babel.config.js
+        ├── jsconfig.json
+        ├── package-lock.json
+        ├── package.json
+        ├── public
+        │   ├── favicon.ico
+        │   └── index.html
+        ├── src
+        │   ├── App.vue
+        │   ├── assets
+        │   │   └── logo.png
+        │   ├── components
+        │   │   └── HelloWorld.vue
+        │   ├── main.js
+        │   ├── router
+        │   │   └── index.js
+        │   └── views
+        │       ├── AboutView.vue
+        │       └── HomeView.vue
+        └── vue.config.js
+
+
